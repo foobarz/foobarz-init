@@ -1,0 +1,8 @@
+RELEASE_1.0.8
+
+Initial release on github. This it program is for /init inside an initramfs (rootfs) filesystem in linux. Typically, you compile this as follows:
+gcc --static foobarz-init.c -o init
+Then you copy it into your location for kernel .config option CONFIG_INITRAMFS_SOURCE as the system initialization script to mount your root filesystem and call it's /sbin/init to start up your system.
+
+This release was tested to boot up on a zfs filesystem using ZFSonLinux builtin to the kernel under drivers/.
+
