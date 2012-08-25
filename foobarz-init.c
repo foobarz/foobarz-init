@@ -28,7 +28,7 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#define FOOBARZ_INIT_VERSION "1.0.8"
+#define FOOBARZ_INIT_VERSION "1.0.9"
 #define _BSD_SOURCE
 #include <stdio.h>
 #include <stdarg.h>
@@ -45,7 +45,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define PARAM_REQ_NO 0
 #define PARAM_REQ_YES 1
 #define PARAM_SRC_DEFAULT 0
-#define PARAM_SRC_LOCAL 1
+#define PARAM_SRC_CMDLINE 1
 
 /* Your initramfs-source should contain the following
  * cd /boot/initramfs-source
@@ -66,6 +66,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 void printk(char *fmt, ...) {
   FILE* f;
+  int fd;
   va_list args;
 
   f = fopen("/dev/kmsg", "w");
@@ -74,13 +75,13 @@ void printk(char *fmt, ...) {
   va_end(args);
   fflush(f);
   fclose(f);
+  /* avoid flooding kmsg and having msgs suppressed; 20msgs/sec */
   usleep(50000);
 }
 
 int main(int argc, char* argv[]) {
- /***** variables
-  *
-  */
+ /*** variables */
+
  int i;
  int   fd = 0; /* file descriptor */
  unsigned long mountflags;
@@ -90,7 +91,7 @@ int main(int argc, char* argv[]) {
  char* cmdline; /* to be malloc 4096B */
  char* cmdline_end;
  char* temp_end;
- char* src_msg; /* default or local */
+ char* src_msg; /* default or cmdline */
  int flag_param_missing = 0;
 
  /* use to hold contents of a misc /proc/<file> */
@@ -117,10 +118,9 @@ int main(int argc, char* argv[]) {
    { "console=",    NULL, NULL, PARAM_REQ_NO , PARAM_SRC_DEFAULT }
  };
  enum { iroot, irootfstype, imountopt, iinit, irunlevel, iconsole, ilastparam };
- 
- /***** program
-  *
-  */
+
+ /*** program */
+
  printk("foobarz-init, version %s: booting initramfs.\n", FOOBARZ_INIT_VERSION);
 
  cmdline       = (char*) malloc(4096);
@@ -130,8 +130,9 @@ int main(int argc, char* argv[]) {
    return EX_UNAVAILABLE;
  }
 
- /* mount proc before dev since some devices
-  * symlink into proc */
+ /* mount proc /proc
+  *  note: some /dev devices symlink into /proc
+  *  proc contains info about processes, including cmdline etc. */
  printk("Attempting cmd: mount proc /proc\n");
  if( mount("proc", "/proc", "proc", 0, NULL) != 0 ) {
    printk("time to panic: mount: %s\n", strerror(errno));
@@ -140,8 +141,22 @@ int main(int argc, char* argv[]) {
    printk("Mount proc successful.\n");  
  }
 
- /* mount devtmpfs as expected by an init program
-  * and maybe required to mount zfs */
+ /* mount devtmpfs /dev
+  *  note: This simple init program works if your root device is made from devices
+  *  that are available by default in devtmpfs, such as /dev/sd*
+  * 
+  *  For zfs, your root zfs pool should be created with default device nodes and
+  *  then it should be mountable by this simple init program.
+  *
+  *  udev may be needed to configure device nodes and symlinks required
+  *  to access a root device configuration made with such nodes and symlinks.
+  *  If you need udevd, you can include it into your initramfs-source and
+  *  modify this program to run it before attempting to mount your root device.
+  *  However, if udevd is needed, a significant number of userspace programs may also be
+  *  required by rules in /lib/udev/. You could install busybox + udev (about 5MB) or
+  *  coreutils + util-linux + bash + udev (about 25MB) into initramfs-source. But, at that
+  *  point you'd have ash or bash and many tools that are easier to use than this
+  *  simple init program; it would then be easy to have /init as #!/bin/<b>ash script. */
  printk("Attempting cmd: mount devtmpfs /dev\n");
  if( mount("devtmpfs", "/dev", "devtmpfs", 0, NULL) != 0 ) {
    printk("time to panic: mount: %s\n", strerror(errno));
@@ -149,12 +164,17 @@ int main(int argc, char* argv[]) {
  } else {
    printk("Mount devtmpfs successful.\n");
  }
- /* it is assumed that all required devices are in devtmpfs
-  * and if not, there will be boot problems
-  *
-  * if you need a more complex device setup, then you might need
-  * udevd and run it with a larger full initrd package from your distro
-  */
+
+ /* mount sysfs /sys
+  *  note: some kernel modules try to access /sys with userspace helpers to echo values into /sys variables;
+  *  such modules expect a minimal userspace that contains coreutils or busybox */
+ printk("Attempting cmd: mount sysfs /sys\n");
+ if( mount("sysfs", "/sys", "sysfs", 0, NULL) != 0 ) {
+   printk("time to panic: mount: %s\n", strerror(errno));
+   return EX_UNAVAILABLE;
+ } else {
+   printk("Mount sysfs successful.\n");
+ }
 
  /* process kernel command line */
  fd = open("/proc/cmdline", O_RDONLY);
@@ -189,7 +209,7 @@ int main(int argc, char* argv[]) {
  for( i=iroot; i<ilastparam; i++ ) {
    param[i].v = strstr(cmdline, param[i].n);
    if( param[i].v != NULL ) {
-     param[i].src = PARAM_SRC_LOCAL; /* value src: local */
+     param[i].src = PARAM_SRC_CMDLINE;
      while( *(param[i].v) != '=' ) param[i].v++;
      param[i].v++;
      temp_end = param[i].v;
@@ -209,7 +229,7 @@ int main(int argc, char* argv[]) {
    if( param[i].v_end != NULL ) *(param[i].v_end) = '\0';
    /* set defaults if no value on cmdline */
    if( param[i].v == NULL ) {
-     param[i].src = PARAM_SRC_DEFAULT; /* value src: default */
+     param[i].src = PARAM_SRC_DEFAULT;
      if( param[i].req == PARAM_REQ_YES ) flag_param_missing = 1;
      switch(i) {
        case iroot      : param[i].v = "<missing required param>" ; break;
@@ -232,13 +252,9 @@ int main(int argc, char* argv[]) {
  }
 
  /* generic nv pair kernel cmdline processing finished
-  *  now, examine specific params for defaults and correctness
-  */
+  *  now, examine specific params for defaults and correctness */
 
- /* param[iroot]: nothing to do, if user put bad device in then we fail */
-
- /* param[irootfstype]: can be checked against /proc/filesystems: */
- /* required, so should have value */
+ /* param[irootfstype]: can be checked against /proc/filesystems: */ 
  fd = open("/proc/filesystems", O_RDONLY);
  if( fd == -1 ) {
    printk("Cannot open /proc/filesystems: %s\n", strerror(errno));
@@ -254,18 +270,19 @@ int main(int argc, char* argv[]) {
    printk("%s \"%s\": filesystem type not available.\n", param[irootfstype].n, param[irootfstype].v);
    return EX_UNAVAILABLE;
  }
- 
+
+ /* zfs-specific informative checks */
  if( strcmp(param[irootfstype].v, "zfs") == 0 ) {
    if( access("/etc/zfs/zpool.cache", F_OK) == 0 )
      printk("rootfstype=%s: /etc/zfs/zpool.cache is present in initramfs.\n", param[irootfstype].v);
    else
-     printk("rootfstype=%s: /etc/zfs/zpool.cache not present in initramfs.\n", param[irootfstype].v);   
+     printk("rootfstype=%s: /etc/zfs/zpool.cache not present in initramfs.\n", param[irootfstype].v);
+
    if( access("/etc/hostid", F_OK) == 0 )
      printk("rootfstype=%s: /etc/hostid is present in initramfs.\n", param[irootfstype].v);
    else
      printk("rootfstype=%s: /etc/hostid not present in initramfs.\n", param[irootfstype].v);
  }
-
 
  if(      strcmp(param[imountopt].v, "ro") == 0 ) mountflags = MS_RDONLY;
  else if( strcmp(param[imountopt].v, "rw") == 0 ) mountflags = 0;
@@ -274,6 +291,14 @@ int main(int argc, char* argv[]) {
    mountflags = MS_RDONLY;
  }
 
+ /* param[iroot]: nothing to check; if user gives bad root=device then mount fails */
+
+ /* try to mount root=device at /mnt
+  *
+  * note: for zfs, if a copy of /etc/zfs/zpool.cache (when pool is imported) is put in initramfs-source, then
+  * the zfs module can read it and automatically import the pools described in the cache file; the imported
+  * pools can be available to mount here if they were created using standard device names, otherwise
+  * udevd may be required to run before mounting the pool */
  printk("Attempting cmd: mount -t %s -o %s %s /mnt.\n", param[irootfstype].v, param[imountopt].v, param[iroot].v);
  if( mount(param[iroot].v, "/mnt", param[irootfstype].v, mountflags, NULL) != 0 ) {
   printk("time to panic: mount: %s\n", strerror(errno));
@@ -281,6 +306,7 @@ int main(int argc, char* argv[]) {
  }
  printk("%s mounted successfully.\n", param[iroot].v);
 
+ /* check to see if the mounted root filesystem has an executable init program */
  chdir("/mnt");
  if( access(param[iinit].v+1, X_OK) != 0 ) {
    chdir("/");
@@ -295,10 +321,25 @@ int main(int argc, char* argv[]) {
    return EX_UNAVAILABLE;
  }
  chdir("/");
-
  printk("Init program /mnt/%s is present and executable.\n", param[iinit].v+1);
+
+ /* switch the root / from initramfs to the mounted new root device at /mnt.
+  * 
+  * note: after this switch, it is not possible to access the initramfs files anymore,
+  * yet they consume ram memory unless they are deleted here before switching.
+  * Any programs that are run after clearing the initramfs and switching root must exist on the new root.
+  * This program may safely delete itself (/init) since it is already in ram and executing.
+  * If you have installed additional files and programs in initramfs that consume significant ram,
+  * then you need to insert additional code here to delete those files (carefully). */
+
+ /* delete files off of initramfs to free ram memory */
+ printk("Freeing memory from initramfs...\n");
+ if( unlink("/init") != 0 ) printk("unlink %s: %s\n", "/init", strerror(errno));
+ else printk("/init %s", "deleted from initramfs.\n");
+
+ /* switch root */
  printk("Beginning switch root procedure.\n");
- 
+
  printk("(1) Attempting cmd: mount --move /dev /mnt/dev \n");
  if( mount("/dev", "/mnt/dev", NULL, MS_MOVE, NULL) != 0 ) {
   printk("time to panic: mount: %s\n", strerror(errno));
@@ -310,26 +351,32 @@ int main(int argc, char* argv[]) {
   printk("time to panic: mount: %s\n", strerror(errno));
   return EX_UNAVAILABLE;
  }
+ 
+ printk("(3) Attempting cmd: mount --move /sys /mnt/sys \n");
+ if( mount("/sys", "/mnt/sys", NULL, MS_MOVE, NULL) != 0 ) {
+  printk("time to panic: mount: %s\n", strerror(errno));
+  return EX_UNAVAILABLE;
+ }
 
- printk("(3) Attempting cmd: chdir /mnt \n");
+ printk("(4) Attempting cmd: chdir /mnt \n");
  if( chdir("/mnt") != 0 ) {
   printk("time to panic: chdir: %s\n", strerror(errno));
   return EX_UNAVAILABLE;
  }
 
- printk("(4) Attempting cmd: mount --move . / \n");
+ printk("(5) Attempting cmd: mount --move . / \n");
  if( mount(".", "/", NULL, MS_MOVE, NULL) != 0 ) {
   printk("time to panic: mount: %s\n", strerror(errno));
   return EX_UNAVAILABLE;
  }
  
- printk("(5) Attempting cmd: chroot . \n");
+ printk("(6) Attempting cmd: chroot . \n");
  if( chroot(".") != 0 ) {
   printk("time to panic: chroot: %s\n", strerror(errno));
   return EX_UNAVAILABLE;
  }
  
- printk("(6) Attempting cmd: chdir / \n");
+ printk("(7) Attempting cmd: chdir / \n");
  if( chdir("/") != 0 ) {
   printk("time to panic: chdir: %s\n", strerror(errno));
   return EX_UNAVAILABLE;
@@ -339,7 +386,7 @@ int main(int argc, char* argv[]) {
  /* check for "console=" kernel parameter and switch
   *  stdin, stdout, and stderr to named console device
   */
- if( param[iconsole].src == PARAM_SRC_LOCAL ) {
+ if( param[iconsole].src == PARAM_SRC_CMDLINE ) {
    printk("Console redirection to device %s requested.\n", param[iconsole].v);
    /* expect only basename of console device (e.g., ttyS0), so chdir /dev */
    chdir("/dev");
