@@ -334,8 +334,8 @@ int main(int argc, char* argv[]) {
 
  /* delete files off of initramfs to free ram memory */
  printk("Freeing memory from initramfs...\n");
- if( unlink("/init") != 0 ) printk("unlink %s: %s\n", "/init", strerror(errno));
- else printk("/init %s", "deleted from initramfs.\n");
+ if( unlink(argv[0]) != 0 ) printk("unlink %s: %s\n", argv[0], strerror(errno));
+ else printk("%s %s", argv[0], "deleted from initramfs.\n");
 
  /* switch root */
  printk("Beginning switch root procedure.\n");
