@@ -28,30 +28,14 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#define FOOBARZ_INIT_VERSION "1.0.9"
-#define _BSD_SOURCE
-#include <stdio.h>
-#include <stdarg.h>
-#include <stdlib.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/mount.h>
-#include <sysexits.h>
-#include <errno.h>
-#include <string.h>
-
-#define PARAM_REQ_NO 0
-#define PARAM_REQ_YES 1
-#define PARAM_SRC_DEFAULT 0
-#define PARAM_SRC_CMDLINE 1
-
 /* Your initramfs-source should contain the following
+ * 
  * cd /boot/initramfs-source
  * mkdir -p proc dev sys mnt bin sbin etc/zfs
  * touch etc/mtab
  * cp /etc/zfs/zpool.cache-initrd etc/zfs/zpool.cache
+ * # zpool.cache is optional - zpool_import_ kernel params can be used instead
+ * #  see below for details on using zpool_import
  * mknod dev/console c 5 1   # system console
  * mknod dev/kmsg    c 1 11  # lines printed to kmsg enter kernel messages buffer
  * mknod dev/loop0   b 7 0
@@ -62,7 +46,58 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * mknod dev/ttyS1   c 4 65  # COM2
  * mknod dev/ttyS2   c 4 66  # COM3
  * mknod dev/ttyS3   c 4 67  $ COM4
+ * 
+ * and this program compiled to /boot/initramfs-source/init
+ * 
+ * Set kernel config option
+ *  CONFIG_INITRAMFS_SOURCE=/boot/initramfs-source
+ * to build the initramfs into your kernel image
+ *  that also has builtin drivers (spl and zfs, etc).
  */
+
+#define FOOBARZ_INIT_VERSION "1.1.0"
+#define _BSD_SOURCE
+#include <stdio.h>
+#include <stdarg.h>
+#include <stdlib.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/mount.h>
+#include <sysexits.h>
+#include <errno.h>
+#include <string.h>
+/* support for zpool import
+ * 
+ * If -DINCLUDE_ZPOOL_IMPORT, then support to import a zpool is
+ * enabled in the program. Enabling it will add many dependencies to the
+ * compile and link; for example:
+ * 
+ * gcc -static -DINCLUDE_ZPOOL_IMPORT \
+ *    foobarz-init.c -include /usr/src/zfs-0.6.0-rc10/3.2.28/zfs_config.h \
+ *   -o init \
+ *   -I /usr/include/libspl -I /usr/include/libzfs \
+ *   -lzfs -lnvpair -lzpool -luutil -luuid -lrt -lz -lm -lpthread \
+ *   -I /usr/include/tirpc \
+ *   -ltirpc
+ * 
+ * Note that libtirpc is a drop-in replacement for the SunRPC functions that
+ * used to be in glibc. No additional includes are needed, just the gcc -I and -l
+ * options for tirpc.
+ * 
+ * Otherwise, with -UINCLUDE_ZPOOL_IMPORT, the compile is just:
+ * gcc -static foobarz-init.c -o init
+ */
+#if defined(INCLUDE_ZPOOL_IMPORT)
+#include <libzfs.h>
+#else
+#include <sys/types.h>
+#include <sys/stat.h>
+#endif
+
+#define PARAM_REQ_NO 0
+#define PARAM_REQ_YES 1
+#define PARAM_SRC_DEFAULT 0
+#define PARAM_SRC_CMDLINE 1
 
 void printk(char *fmt, ...) {
   FILE* f;
@@ -116,8 +151,37 @@ int main(int argc, char* argv[]) {
    { "init=",       NULL, NULL, PARAM_REQ_NO , PARAM_SRC_DEFAULT },
    { "runlevel=",   NULL, NULL, PARAM_REQ_NO , PARAM_SRC_DEFAULT },
    { "console=",    NULL, NULL, PARAM_REQ_NO , PARAM_SRC_DEFAULT }
+#if defined(INCLUDE_ZPOOL_IMPORT)
+   ,
+   { "zpool_import_name=",    NULL, NULL, PARAM_REQ_NO , PARAM_SRC_DEFAULT },
+   { "zpool_import_guid=",    NULL, NULL, PARAM_REQ_NO , PARAM_SRC_DEFAULT },
+   { "zpool_import_newname=", NULL, NULL, PARAM_REQ_NO , PARAM_SRC_DEFAULT },
+   { "zpool_import_force=",   NULL, NULL, PARAM_REQ_NO , PARAM_SRC_DEFAULT }
+#endif
  };
- enum { iroot, irootfstype, imountopt, iinit, irunlevel, iconsole, ilastparam };
+ enum {
+	 iroot,
+	 irootfstype,
+	 imountopt,
+	 iinit,
+	 irunlevel,
+	 iconsole,
+#if defined(INCLUDE_ZPOOL_IMPORT)
+	 izpool_import_name,
+	 izpool_import_guid,
+	 izpool_import_newname,
+	 izpool_import_force,
+#endif
+	 ilastparam
+ };
+ 
+#if defined(INCLUDE_ZPOOL_IMPORT) 
+ libzfs_handle_t* libzfs = NULL;
+ importargs_t iargs = { 0 };
+ nvlist_t* pools = NULL;
+ nvpair_t* pool = NULL;
+ nvlist_t* config = NULL;
+#endif
 
  /*** program */
 
@@ -238,7 +302,7 @@ int main(int argc, char* argv[]) {
        case iinit      : param[i].v = "/sbin/init"; break;
        case irunlevel  : param[i].v = "3"         ; break;
        case iconsole   : param[i].v = "console"   ; break;
-       default         : param[i].v = "";
+       default         : param[i].v = NULL;
      }
    }
    if(param[i].src == PARAM_SRC_DEFAULT) src_msg = "default";
@@ -271,7 +335,7 @@ int main(int argc, char* argv[]) {
    return EX_UNAVAILABLE;
  }
 
- /* zfs-specific informative checks */
+ /* zfs-specific */
  if( strcmp(param[irootfstype].v, "zfs") == 0 ) {
    if( access("/etc/zfs/zpool.cache", F_OK) == 0 )
      printk("rootfstype=%s: /etc/zfs/zpool.cache is present in initramfs.\n", param[irootfstype].v);
@@ -282,6 +346,60 @@ int main(int argc, char* argv[]) {
      printk("rootfstype=%s: /etc/hostid is present in initramfs.\n", param[irootfstype].v);
    else
      printk("rootfstype=%s: /etc/hostid not present in initramfs.\n", param[irootfstype].v);
+
+#if defined(INCLUDE_ZPOOL_IMPORT)
+   /* zpool import */
+   if( (param[izpool_import_name].v != NULL) || (param[izpool_import_guid].v != NULL) ) {
+	printk("zpool_import: import requested.\n");
+	if( (param[izpool_import_name].v != NULL) && (param[izpool_import_guid].v != NULL) ) {
+		printk("zpool_import: given both pool name and guid; using guid.\n");
+		param[izpool_import_name].v = NULL;
+	}
+	if( param[izpool_import_name].v != NULL )
+		printk("zpool_import: pool name: %s\n", param[izpool_import_name].v );
+	else
+		printk("zpool_import: pool guid: %s\n", param[izpool_import_guid].v );
+
+	iargs.path = NULL;
+	iargs.paths = 0;
+	iargs.poolname = param[izpool_import_name].v;
+	if( param[izpool_import_guid].v != NULL )
+		iargs.guid = strtoull(param[izpool_import_guid].v, NULL, 10);
+	else
+		iargs.guid = 0;
+	iargs.cachefile = NULL;
+	if( (param[izpool_import_force].v != NULL) && (strcmp(param[izpool_import_force].v, "1") == 0) ) {
+		iargs.can_be_active = 1;
+		printk("zpool_import: import forced.\n");
+	} else {
+		iargs.can_be_active = 0;
+		printk("zpool_import: import not forced.\n");
+	}
+	iargs.unique = 1;
+	iargs.exists = 1;
+
+	printk("zpool_import: init libzfs.\n");
+	libzfs = libzfs_init();
+	printk("zpool_import: searching for pool.\n");
+	pools = zpool_search_import(libzfs, &iargs);
+	if( (pools == NULL) || nvlist_empty(pools) )
+		printk("zpool_import: pool not available for import, or already imported by cachefile.\n");
+	else {
+		printk("zpool_import: getting pool information.\n");
+		pool = nvlist_next_nvpair(pools, pool);
+		printk("zpool_import: getting pool configuration.\n");
+		nvpair_value_nvlist(pool, &config);
+		printk("zpool_import: attempting pool import.\n");
+		if( zpool_import(libzfs, config, param[izpool_import_newname].v, NULL) != 0 ) {
+			printk("zpool_import: import failed.\n");
+			printk("zpool_import: error description: %s\n", libzfs_error_description(libzfs) );
+			printf("zpool_import: error action: %s\n", libzfs_error_action(libzfs) );
+		} else  printk("zpool_import: import successful.\n");
+	}
+	printk("zpool_import: fini libzfs.\n");
+	libzfs_fini(libzfs);
+   }
+#endif /* zpool_import */
  }
 
  if(      strcmp(param[imountopt].v, "ro") == 0 ) mountflags = MS_RDONLY;
