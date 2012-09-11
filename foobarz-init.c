@@ -55,7 +55,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *  that also has builtin drivers (spl and zfs, etc).
  */
 
-#define FOOBARZ_INIT_VERSION "1.1.0"
+#define FOOBARZ_INIT_VERSION "1.1.1"
 #define _BSD_SOURCE
 #include <stdio.h>
 #include <stdarg.h>
@@ -393,7 +393,7 @@ int main(int argc, char* argv[]) {
 		if( zpool_import(libzfs, config, param[izpool_import_newname].v, NULL) != 0 ) {
 			printk("zpool_import: import failed.\n");
 			printk("zpool_import: error description: %s\n", libzfs_error_description(libzfs) );
-			printf("zpool_import: error action: %s\n", libzfs_error_action(libzfs) );
+			printk("zpool_import: error action: %s\n", libzfs_error_action(libzfs) );
 		} else  printk("zpool_import: import successful.\n");
 	}
 	printk("zpool_import: fini libzfs.\n");
