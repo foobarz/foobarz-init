@@ -380,24 +380,28 @@ int main(int argc, char* argv[]) {
 
 	printk("zpool_import: init libzfs.\n");
 	libzfs = libzfs_init();
-	printk("zpool_import: searching for pool.\n");
-	pools = zpool_search_import(libzfs, &iargs);
-	if( (pools == NULL) || nvlist_empty(pools) )
-		printk("zpool_import: pool not available for import, or already imported by cachefile.\n");
-	else {
-		printk("zpool_import: getting pool information.\n");
-		pool = nvlist_next_nvpair(pools, pool);
-		printk("zpool_import: getting pool configuration.\n");
-		nvpair_value_nvlist(pool, &config);
-		printk("zpool_import: attempting pool import.\n");
-		if( zpool_import(libzfs, config, param[izpool_import_newname].v, NULL) != 0 ) {
-			printk("zpool_import: import failed.\n");
-			printk("zpool_import: error description: %s\n", libzfs_error_description(libzfs) );
-			printk("zpool_import: error action: %s\n", libzfs_error_action(libzfs) );
-		} else  printk("zpool_import: import successful.\n");
+	if( libzfs != NULL ) {
+		printk("zpool_import: searching for pool.\n");
+		pools = zpool_search_import(libzfs, &iargs);
+		if( (pools == NULL) || nvlist_empty(pools) )
+			printk("zpool_import: pool not available for import, or already imported by cachefile.\n");
+		else {
+			printk("zpool_import: getting pool information.\n");
+			pool = nvlist_next_nvpair(pools, pool);
+			printk("zpool_import: getting pool configuration.\n");
+			nvpair_value_nvlist(pool, &config);
+			printk("zpool_import: attempting pool import.\n");
+			if( zpool_import(libzfs, config, param[izpool_import_newname].v, NULL) != 0 ) {
+				printk("zpool_import: import failed.\n");
+				printk("zpool_import: error description: %s\n", libzfs_error_description(libzfs) );
+				printk("zpool_import: error action: %s\n", libzfs_error_action(libzfs) );
+			} else  printk("zpool_import: import successful.\n");
+		}
+		printk("zpool_import: fini libzfs.\n");
+		libzfs_fini(libzfs);
+	} else {
+		printk("zpool_import: unable to initialize libzfs.\n");
 	}
-	printk("zpool_import: fini libzfs.\n");
-	libzfs_fini(libzfs);
    }
 #endif /* zpool_import */
  }
