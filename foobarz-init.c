@@ -47,15 +47,16 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * mknod dev/ttyS2   c 4 66  # COM3
  * mknod dev/ttyS3   c 4 67  $ COM4
  * 
- * and this program compiled to /boot/initramfs-source/init
- * 
+ * Copy this compiled program to /boot/initramfs-source/init
+ * If not named /init, then use rdinit=/othername kernel parameter.
+ *
  * Set kernel config option
  *  CONFIG_INITRAMFS_SOURCE=/boot/initramfs-source
  * to build the initramfs into your kernel image
  *  that also has builtin drivers (spl and zfs, etc).
  */
 
-#define FOOBARZ_INIT_VERSION "1.1.1"
+#define FOOBARZ_INIT_VERSION "1.1.2"
 #define _BSD_SOURCE
 #include <stdio.h>
 #include <stdarg.h>
@@ -145,18 +146,18 @@ int main(int argc, char* argv[]) {
  /* you can add more params somwhere after root= */
  struct nv { char* n; char* v; char* v_end; int req; int src; };
  struct nv param[] = {
-   { "root=",       NULL, NULL, PARAM_REQ_YES, PARAM_SRC_DEFAULT },
-   { "rootfstype=", NULL, NULL, PARAM_REQ_YES, PARAM_SRC_DEFAULT },
-   { "mountopt=",   NULL, NULL, PARAM_REQ_NO , PARAM_SRC_DEFAULT },
-   { "init=",       NULL, NULL, PARAM_REQ_NO , PARAM_SRC_DEFAULT },
-   { "runlevel=",   NULL, NULL, PARAM_REQ_NO , PARAM_SRC_DEFAULT },
-   { "console=",    NULL, NULL, PARAM_REQ_NO , PARAM_SRC_DEFAULT }
+   { " root=",       NULL, NULL, PARAM_REQ_YES, PARAM_SRC_DEFAULT },
+   { " rootfstype=", NULL, NULL, PARAM_REQ_YES, PARAM_SRC_DEFAULT },
+   { " mountopt=",   NULL, NULL, PARAM_REQ_NO , PARAM_SRC_DEFAULT },
+   { " init=",       NULL, NULL, PARAM_REQ_NO , PARAM_SRC_DEFAULT },
+   { " runlevel=",   NULL, NULL, PARAM_REQ_NO , PARAM_SRC_DEFAULT },
+   { " console=",    NULL, NULL, PARAM_REQ_NO , PARAM_SRC_DEFAULT }
 #if defined(INCLUDE_ZPOOL_IMPORT)
    ,
-   { "zpool_import_name=",    NULL, NULL, PARAM_REQ_NO , PARAM_SRC_DEFAULT },
-   { "zpool_import_guid=",    NULL, NULL, PARAM_REQ_NO , PARAM_SRC_DEFAULT },
-   { "zpool_import_newname=", NULL, NULL, PARAM_REQ_NO , PARAM_SRC_DEFAULT },
-   { "zpool_import_force=",   NULL, NULL, PARAM_REQ_NO , PARAM_SRC_DEFAULT }
+   { " zpool_import_name=",    NULL, NULL, PARAM_REQ_NO , PARAM_SRC_DEFAULT },
+   { " zpool_import_guid=",    NULL, NULL, PARAM_REQ_NO , PARAM_SRC_DEFAULT },
+   { " zpool_import_newname=", NULL, NULL, PARAM_REQ_NO , PARAM_SRC_DEFAULT },
+   { " zpool_import_force=",   NULL, NULL, PARAM_REQ_NO , PARAM_SRC_DEFAULT }
 #endif
  };
  enum {
@@ -288,6 +289,7 @@ int main(int argc, char* argv[]) {
    }
  }
 
+ /* set defaults for params not given on cmdline */
  for( i=iroot; i<ilastparam; i++ ) {
    /* terminate value strings */
    if( param[i].v_end != NULL ) *(param[i].v_end) = '\0';
